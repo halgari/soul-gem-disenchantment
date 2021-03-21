@@ -15,17 +15,13 @@ namespace Halgari.SoulGemDisenchantment
     {
         public static async Task<int> Main(string[] args)
         {
-            return await SynthesisPipeline.Instance.AddPatch<ISkyrimMod, ISkyrimModGetter>(RunPatch).Run(args, new RunPreferences()
-            {
-                ActionsForEmptyArgs = new RunDefaultPatcher()
-                {
-                    IdentifyingModKey = "HalgariSoulGemDisenchantment.esp",
-                    TargetRelease = GameRelease.SkyrimSE,
-                }
-            });
+            return await SynthesisPipeline.Instance
+                .SetTypicalOpen(GameRelease.SkyrimSE, "HalgariSoulGemDisenchantment.esp")
+                .AddPatch<ISkyrimMod, ISkyrimModGetter>(RunPatch)
+                .Run(args);
         }
 
-        public static List<(FormKey Filled, FormKey Empty)> SoulGems = new()
+        public static List<(IFormLinkGetter<ISoulGemGetter> Filled, IFormLinkGetter<ISoulGemGetter> Empty)> SoulGems = new()
         {
             (SoulGemPettyFilled, SoulGemPetty),
             (SoulGemLesserFilled, SoulGemLesser),
@@ -37,7 +33,7 @@ namespace Halgari.SoulGemDisenchantment
         public static void RunPatch(IPatcherState<ISkyrimMod, ISkyrimModGetter> state)
         {
             var allGems = state.LoadOrder.PriorityOrder.SoulGem().WinningOverrides()
-                .ToDictionary(d => d.FormKey);
+                .ToDictionary(d => d.AsLinkGetter());
 
             var matchedGems = SoulGems.Select(g => (g.Filled, g.Empty, allGems[g.Filled])).ToArray();
             Console.WriteLine($"Matched {matchedGems.Length} gems in ESPs");
@@ -47,64 +43,62 @@ namespace Halgari.SoulGemDisenchantment
             }
 
             var armors = state.LoadOrder.PriorityOrder.Armor().WinningOverrides()
-                .Where(armor => armor.ObjectEffect != FormLink<IEffectRecordGetter>.Null)
                 .Where(armor => !armor.ObjectEffect.IsNull)
-                .Select(armor => (armor.FormKey, armor.Value, armor.EditorID))
+                .Select(armor => (armor.AsLink<IItemGetter>(), armor.Value, armor.EditorID))
                 .ToArray();
-            
+
             Console.WriteLine($"Found {armors.Length} enchanted armors");
-            
+
             var weapons = state.LoadOrder.PriorityOrder.Weapon().WinningOverrides()
-                .Where(weapon => weapon.ObjectEffect != FormLink<IEffectRecordGetter>.Null)
                 .Where(armor => !armor.ObjectEffect.IsNull)
-                .Select(weapon => (weapon.FormKey, weapon.BasicStats!.Value, weapon.EditorID))
+                .Select(weapon => (weapon.AsLink<IItemGetter>(), weapon.BasicStats!.Value, weapon.EditorID))
                 .ToArray();
-            
+
             Console.WriteLine($"Found {weapons.Length} enchanted weapons");
 
             var baseRecipe = Mutagen.Bethesda.FormKeys.SkyrimSE.Skyrim.ConstructibleObject.RecipeIngotIron;
 
             var sortedGems = matchedGems.OrderByDescending(g => g.Item3.Value).ToArray();
 
-            foreach (var (formKey, value, editorId) in armors.Concat(weapons))
+            foreach (var (link, value, editorId) in armors.Concat(weapons))
             {
                 var (filled, empty, _) = sortedGems.FirstOrDefault(gem => gem.Item3.Value <= value * 0.75);
-                if (filled == FormKey.Null) 
+                if (filled.IsNull)
                     continue;
                 var key = state.PatchMod.GetNextFormKey();
                 var cpy = state.PatchMod.ConstructibleObjects.AddNew(key);
-                cpy.WorkbenchKeyword = CraftingSmelter;
+                cpy.WorkbenchKeyword.SetTo(CraftingSmelter);
                 cpy.CreatedObjectCount = 1;
                 cpy.EditorID = editorId + "_ToGem";
                 cpy.Conditions.Add(new ConditionFloat
                 {
                     Data = new FunctionConditionData
                     {
-                        Function = 47,
-                        ParameterOneRecord = new FormLink<ISkyrimMajorRecordGetter>(formKey)
+                        Function = ConditionData.Function.GetItemCount,
+                        ParameterOneRecord = link
                     },
                     CompareOperator = CompareOperator.GreaterThanOrEqualTo,
                     ComparisonValue = 1.0f
                 });
                 cpy.Items = new ExtendedList<ContainerEntry> {
-                    new() 
+                    new()
                     {
                         Item = new ContainerItem
                         {
-                            Item = new FormLink<IItemGetter>(formKey),
+                            Item = link,
                             Count = 1
                         }
                     },
-                    new() 
+                    new()
                     {
                         Item = new ContainerItem
                         {
-                            Item = new FormLink<IItemGetter>(empty),
+                            Item = empty.AsSetter(),
                             Count = 1
                         }
                     }
                 };
-                cpy.CreatedObject = filled;
+                cpy.CreatedObject.SetTo(filled);
 
             }
 
