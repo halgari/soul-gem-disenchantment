@@ -74,7 +74,7 @@ namespace Halgari.SoulGemDisenchantment
                 {
                     Data = new FunctionConditionData
                     {
-                        Function = ConditionData.Function.GetItemCount,
+                        Function = Condition.Function.GetItemCount,
                         ParameterOneRecord = link
                     },
                     CompareOperator = CompareOperator.GreaterThanOrEqualTo,
